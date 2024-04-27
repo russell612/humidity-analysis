@@ -1,0 +1,579 @@
+---
+title: "FIT3152 Assignment 2"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+Author: Russell Kong Yen Teng
+Student ID: 32872461
+---
+
+This is my submission for FIT3152 Assignment 2
+
+```{r echo = T, results = 'hide'}
+#importing libraries
+
+library("dplyr", warn.conflicts = F, quietly = T)
+library("ggplot2", warn.conflicts = F, quietly = T)
+library("lattice", warn.conflicts = F, quietly = T)
+library("ggpubr", warn.conflicts = F, quietly = T)
+library("reshape2", warn.conflicts = F, quietly = T)
+library("cluster", warn.conflicts = F, quietly = T)
+library("tidyr", warn.conflicts = F, quietly = T)
+```
+
+```{r}
+rm(list = ls())
+WAUS <- read.csv("HumidPredict2023D.csv")
+L <- as.data.frame(c(1:49))
+set.seed(32872461) # Your Student ID is the random seed
+L <- L[sample(nrow(L), 10, replace = FALSE),] # sample 10 locations
+WAUS <- WAUS[(WAUS$Location %in% L),]
+WAUS <- WAUS[sample(nrow(WAUS), 2000, replace = FALSE),] # sample 2000 rows
+
+```
+
+-Question 1
+
+We are able to find the total number of days when it is more humid than the previous days by using the following code. We will be ignoring N/A values for this analysis.
+
+```{r}
+WAUS = na.omit(WAUS)
+```
+
+```{r}
+count(WAUS[22])
+
+humid_count = WAUS %>% group_by(MHT) %>% summarise(total = n(), .groups = 'drop')
+
+humid_count$MHT = as.factor(humid_count$MHT)
+
+humid = ggplot(humid_count, aes(x=MHT, y=total, fill = MHT)) + geom_bar(stat= 'identity') + geom_text(aes(label = total), position = position_dodge(width=0.9), vjust = -0.3) + labs(title= 'Frequency of Days More Humid tomorrow and Less Humid Tomorrow', x = 'Humidity', y = 'Frequency' ) + scale_x_discrete(labels = c('Less Humid', 'More Humid')) + scale_fill_discrete(labels=c('Less Humid', 'More Humid'))
+
+humid
+```
+
+The frequency of those days where tomorrow will be more humid than today seems to be around the same. With the proportion hitting around the 50% mark.
+
+```{r}
+min_temp = boxplot(WAUS[3:4], xlab="Minimum and Maximum Temperatures")
+
+temp_group = c("Min Temp", "Max Temp")
+temp_means = c(mean(WAUS$MinTemp, na.rm=TRUE), mean(WAUS$MaxTemp, na.rm=TRUE))
+
+temp_sds = c(sd(WAUS$MinTemp, na.rm=TRUE), sd(WAUS$MaxTemp, na.rm=TRUE))
+
+
+temp = data.frame(temp_group, temp_means, temp_sds)
+ggplot(temp, aes(temp_group, temp_means)) + geom_errorbar(aes(ymin=temp_means-temp_sds, ymax=temp_means+temp_sds), width = 0.2) + geom_point()
+```
+
+The graph above shows the mean values of the maximum temperature and the minimum temperature of all the locations as well as their standard deviations. This is doen through adding or subtracting them from the mean value to give a whisker plot of those values.
+
+The following tables show all the means and standard deviation values for all the other attributes.
+
+```{r}
+means1 = summarize_all(WAUS[3:10], mean, na.rm=TRUE)
+means1 = means1 %>% select_if(~ !any(is.na(.)))
+means1 = data.matrix(means1)
+
+means2 = summarize_all(WAUS[11:20], mean, na.rm=TRUE)
+means2 = means2 %>% select_if(~ !any(is.na(.)))
+means2 = data.matrix(means2)
+
+barplot(means1, cex.names = 0.5, title = 'Mean Values of Attributes (1)')
+barplot(means2, cex.names = 0.5, title = 'Mean values of Attributes (2)')
+```
+
+The above graphs show the mean values of the variables except year, location, MHT and risk_mm and character based variables as their means are irrelevant and/or unobtainable for this analysis
+
+```{r}
+sds1 = summarize_all(WAUS[3:10], sd, na.rm=TRUE)
+sds1 = sds1 %>% select_if(~ !any(is.na(.)))
+sds1 = data.matrix(sds1)
+
+sds2 = summarize_all(WAUS[11:20], sd, na.rm=TRUE)
+sds2 = sds2 %>% select_if(~ !any(is.na(.)))
+sds2 = data.matrix(sds2)
+
+barplot(sds1, cex.names = 0.5, title = 'Standard Deviation of Attributes (1)')
+barplot(sds2, cex.names = 0.5, ylim = c(0, 10), title = 'Standard Deviation of Attributes (2)')
+```
+
+As for now I do not believe that there are any variables that will be omitted as I believe that all variables will be used in analysis. I also do not think that currently there are any interesting variables as of yet as they all seem to be normal.
+
+-Question 2
+
+There will be some pre-processing done before our analysis. We are omitting all rows that have any one column that was N/A. This is because that we are trying to ensure all the rows have the proper values for when we make our models.
+
+We also pre-processed all character based columns to factors
+
+```{r}
+WAUS = data.frame(WAUS, stringsAsFactors = TRUE)
+
+sapply(WAUS, class)
+
+WAUS$WindGustDir = as.factor(WAUS$WindGustDir)
+WAUS$WindDir9am = as.factor(WAUS$WindDir9am)
+WAUS$WindDir3pm = as.factor(WAUS$WindDir3pm)
+WAUS$RainToday = as.factor(WAUS$RainToday)
+WAUS$MHT = as.factor(WAUS$MHT)
+```
+
+-Question 3
+
+```{r}
+set.seed(32872461)
+train.row = sample(1:nrow(WAUS), 0.7*nrow(WAUS))
+
+WAUS.train = WAUS[train.row,]
+WAUS.test = WAUS[-train.row,]
+
+```
+
+-Question 4
+
+Decision Trees
+
+Let's try to produce a decision Tree model to predict if based on data on whether we will be able predict if it would be more humid tomorrow.
+
+```{r}
+#install.packages("tree")
+library(tree, warn.conflicts = F, quietly = T)
+```
+
+The above code imports the tree library into our environment
+
+```{r}
+
+treefit = tree(MHT ~ ., data = WAUS.train)
+
+plot(treefit)
+```
+
+Naive Bayes
+
+Using Naive Bayes, we can do so using the following code
+
+```{r}
+#install.packages("e1071")
+library(e1071, warn.conflicts = F, quietly = T)
+```
+
+```{r}
+bayes_model = naiveBayes(MHT ~ ., data = WAUS.train)
+```
+
+Bagging
+
+Bagging can be done with the following Code
+
+```{r}
+#install.packages("adabag")
+library(adabag, warn.conflicts = F, quietly = T)
+library(rpart, warn.conflicts = F, quietly = T)
+
+WAUS$MHT = as.factor(WAUS$MHT)
+
+str(WAUS$MHT)
+
+bag = bagging(MHT~ ., data = WAUS.train, mfinal = 10)
+```
+
+Boosting
+
+Boosting is done with the following code
+
+```{r}
+boost = boosting(MHT~., data = WAUS.train)
+```
+
+Finally, we will be using Random Forests with the following code.
+
+```{r}
+#install.packages("randomForest")
+library(randomForest, warn.conflicts = F, quietly = T)
+rf = randomForest(MHT ~ ., data = WAUS.train)
+```
+
+After we have created all these models, we will now be plotting their accuracy of predicting MHT using our test data to create a confusion matrix.
+
+```{r}
+calc_acc = function(obj) {
+  
+  matrix = table(actual=WAUS.test$MHT, predicted = obj)
+  
+  print(matrix)
+  
+  return ((matrix[1] + matrix[4]) / (matrix[1] + matrix[2] + matrix[3] + matrix[4])) 
+  
+}
+tree_pred = predict(treefit, WAUS.test, type = "class")
+tree_acc = calc_acc(tree_pred)
+tree_acc
+
+```
+
+Based on the confusion matrix above, the accuracy that we got for our tree model is 0.552 which is 55.2 percent
+
+```{r}
+bayes_pred = predict(bayes_model, WAUS.test)
+bayes_acc = calc_acc(bayes_pred )
+bayes_acc
+```
+
+The naive bayes model shows slight improvements to accuracy, giving 0.569 or 56.9 percent
+
+```{r}
+bag_pred = predict.bagging(bag, newdata = WAUS.test)
+bag_matrix = bag_pred$confusion
+bag_acc = ((bag_matrix[1] + bag_matrix[4]) / (bag_matrix[1] + bag_matrix[2] + bag_matrix[3] + bag_matrix[4])) 
+bag_matrix
+bag_acc
+```
+
+The bagging model shows the exact same accuracy numbers compared to the aive bayes model, with a slight increase in accuracy as compared to the regular tree model.
+
+```{r}
+boost_pred = predict.boosting(boost, newdata = WAUS.test)
+boost_matrix = boost_pred$confusion
+boost_acc = (boost_matrix[1] + boost_matrix[4]) / (boost_matrix[1] + boost_matrix[2] + boost_matrix[3] + boost_matrix[4])
+
+boost_matrix
+boost_acc
+```
+
+Boosting has a worse accuracy as compared to that of Naive Bayes and Bagging but is still better than decision trees.
+
+```{r}
+rf_pred = predict(rf, WAUS.test)
+rf_acc = calc_acc(rf_pred)
+rf_acc
+```
+
+Random Forests gives accuracy ranging between 52 to 53 percent
+
+-Question 6
+
+Now we will be showing the confidence of all the models in their prediction in order to find the AUC values of these models.
+
+```{r}
+#For Tree
+#install.packages("ROCR")
+library(ROCR, warn.conflicts = F, quietly = T)
+
+tree_confidence = predict(treefit, WAUS.test, type = "vector")
+tree_confidence = prediction(tree_confidence
+                             [,2], WAUS.test$MHT)
+tree_roc = performance(tree_confidence, "tpr", "fpr")
+tree_auc = performance(tree_confidence, "auc")
+tree_auc = as.numeric(tree_auc@y.values)
+tree_auc
+```
+
+The AUC of the decision tree is 0.542, now let's check Naive Bayes
+
+```{r}
+bayes_confidence = predict(bayes_model, WAUS.test, type = "raw")
+
+str(bayes_confidence)
+
+
+bayes_confidence = prediction(bayes_confidence[,2], WAUS.test$MHT)
+
+bayes_roc = performance(bayes_confidence, "tpr", "fpr")
+bayes_auc = performance(bayes_confidence, "auc")
+bayes_auc = as.numeric(bayes_auc@y.values)
+bayes_auc
+
+```
+
+Naive Bayes has a slightly better AUC value, 0.5824.
+
+```{r}
+bag_confidence = prediction(bag_pred$prob[,2], WAUS.test$MHT)
+bag_roc = performance(bag_confidence, "tpr", "fpr")
+bag_auc = performance(bag_confidence, "auc")
+bag_auc = as.numeric(bag_auc@y.values)
+bag_auc
+```
+
+Bagging has a higher AUC value compared to the tree and naive bayes models.
+
+```{r}
+rf_confidence = predict(rf, WAUS.test, type = "prob")
+
+
+rf_confidence = prediction(rf_confidence[,2], WAUS.test$MHT)
+rf_roc = performance(rf_confidence, "tpr", "fpr")
+rf_auc = performance(rf_confidence, "auc")
+rf_auc = as.numeric(rf_auc@y.values)
+rf_auc
+```
+
+```{r}
+boost_confidence = prediction(boost_pred$prob[,2], WAUS.test$MHT)
+boost_roc = performance(boost_confidence, "tpr", "fpr")
+boost_auc = performance(boost_confidence, "auc")
+boost_auc = as.numeric(boost_auc@y.values)
+boost_auc
+```
+
+```{r}
+plot(tree_roc, col = "red")
+plot(bayes_roc, add = T, col = "blue")
+plot(bag_roc, add = T, col = "green")
+plot(boost_roc, add = T, col = "yellow")
+plot(rf_roc, add = T, col = "pink")
+legend(x="topleft" , 0, 1, legend = c("Decision Tree" , "Naive Bayes", "Bagging", "Boosting", "Random Forests"), fill = c("red", "blue", "green", "yellow", "pink"))
+```
+
+Based on the results that we have gotten, Random Forests seem to have the best AUC values, followed by Boosting, Bagging, Naive Bayes and Decision Trees.
+
+-Question 7 Comparing Classifiers
+
+```{r}
+classifier_compare = data.frame(models = c("Decision Tree", "Naive Bayes", "Bagging", "Boosting", "Random Forest"), accuracy = c(tree_acc, bayes_acc, bag_acc, boost_acc, rf_acc),
+                                auc = c(tree_auc, bayes_auc, bag_auc, boost_auc, rf_auc))
+
+classifier_compare
+```
+
+```{r}
+ggplot(classifier_compare, aes(models)) + geom_point(aes(y = accuracy, colour="Accuracy")) + geom_point(aes(y=auc, colour = "AUC")) + theme(axis.text.x = element_text(angle = -45)) + labs(y="Value") + theme()
+```
+
+Based on the graphs above, We can see that the Random Forest outperforms everyone on area under graph but is lowest on actual accuracy. Models like Bagging and Naive Bayes are somewhere in the middle while Decision Trees have the overall lowest Accuracy and AUC values. There is no single "Best" Classifier in this case as all seem to have their pros and cons. However, if we are to prioritize AUC, Random Forests may be the best model. This is because if we are to find tune the model to give different predictions by tuning the threshold for predicting if one day will be more humid than tomorrow, then Random Forests will be able to give the highest accuracy as compared to fine tuning the other models.
+
+-Question 8
+
+For this question we will be looking into what are the most important variables in predicting MHT for each model.
+
+```{r}
+summary(treefit)
+```
+
+From here we can see the strongest predictors based from the root. In this case the following in order is WindDir9am, WindDir3pm and windGustDir. What is interesting to note is that RainToday is not a variable here.
+
+```{r}
+importanceplot(bag)
+bag$importance
+```
+
+Using the importance plot methods we are able to see the relative importance of variables for bagging and boosting.
+
+What we can see here is that Wind is a strong variable for bagging but RainToday is 0 in importance
+
+```{r}
+importanceplot(boost)
+boost$importance
+```
+
+The same situation occurs for boosting where WindGustDir, WindDir3pm and WindDir9am are the strongest predictors with RainToday being 0 also
+
+```{r}
+rf$importance
+```
+
+Looking at the statistics for the random forest. Similar statistics follow on where WindDir9am, WindDir3pm and WindGustDir takes strongest predictors, RainToday is the weakest predictor.
+
+What we can conclude here is that Wind Direction is the strongest predictor on whether it would be more humid or not on the next day, while Rain Today seems to not have a correlation towards the label. This can be an indication that wind strongly decides on the humidity of the day tomorrow compared to today while the fact that it rained on this day have little to no correlation towards whether tomorrow would be more Humid or not.
+
+-Question 9
+
+Following this, we can create a Decision Tree with based on 3 strongest variables only. WindGustDir, WindDir9am and WindDir3pm. The reason we chose these 3 variables is because of its higher importance relative to any other predictor.
+
+```{r}
+simple_tree = tree(MHT~ WindDir3pm + WindGustDir + WindDir9am, data = WAUS.train)
+
+summary(simple_tree)
+simple_tree
+
+plot(simple_tree)
+text(simple_tree, pretty= 0)
+```
+
+The graph above shows the decision tree and the variables it has to have in order to make a decision with 1 being it will be more humid and 0 being that it will not be humid and 1 being that it will be humid
+
+Here the height of the tree is 3 which is smaller than that of the original tree. Let us test it's accuracy and Area Under Graph (AUC)
+
+```{r}
+simple_pred = predict(simple_tree, WAUS.test, type= "class")
+simple_acc = calc_acc(simple_pred)
+simple_acc
+
+simple_confidence = predict(simple_tree, WAUS.test, type = "vector")
+simple_confidence = prediction(simple_confidence
+                             [,2], WAUS.test$MHT)
+simple_roc = performance(simple_confidence, "tpr", "fpr")
+plot(simple_roc, col = "red")
+abline(0,1)
+simple_auc = performance(simple_confidence, "auc")
+simple_auc = as.numeric(simple_auc@y.values)
+simple_auc
+
+new_compare = rbind(classifier_compare, c("Simple Tree", simple_acc, simple_auc))
+
+new_compare
+
+ggplot(new_compare, aes(models)) + geom_point(aes(y = accuracy, colour="Accuracy")) + geom_point(aes(y=auc, colour = "AUC")) + theme(axis.text.x = element_text(angle = -45)) + labs(y="Value") + theme()
+```
+
+From here we can see that the accuracy of the Simple Tree is comparable to that of the Random Forest in terms of accuracy while also having an AUC between the Bagging and Boosting methods. Interestingly all metrics seem to improve over the Decision Tree. Indicating that the decision Tree has highly likely been overfitted with the training data.
+
+-Question 10 As random forests has been shown to be the best model so far. We will try to further optimize the model.
+
+We can do this by implementing Cross-Validation to the Random Forest model to produce a better model.
+
+```{r}
+random_optimized = rfcv(WAUS.train[,1:21], WAUS.train[,22], cv.fold = 10, scale = "log", step = 0.5, mtry = function(p) max(1, floor(sqrt(p))),
+                        recursive = FALSE,)
+random_optimized$error.cv
+```
+
+From the function above the cv error values seem to fluctuate a lot. Sometimes 21 attributes will have the lowest error while sometimes it maybe 10. To test on Accuracy and AUC. We will be using a tree with all 21 variables (previous random forest) and one with only 10 variables. We will also be choosing one with 3 variables, to compare with our simple decision tree that we have made earlier.
+
+For this we will be choosing the top 10 variables for the new model
+
+```{r}
+rf$importance
+sort(rf$importance)
+rf_10 = randomForest(MHT ~ WindDir9am + WindDir3pm  + WindGustDir + Evaporation + Temp3pm + Pressure9am + Temp9am + MinTemp + MaxTemp + Pressure3pm, WAUS.train)
+
+random_pred = predict(rf_10, WAUS.test)
+random_acc = calc_acc(random_pred)
+
+random_confidence = predict(rf_10 , WAUS.test, type = "prob")
+random_confidence = prediction(random_confidence[,2], WAUS.test$MHT)
+random_roc = performance(random_confidence, "tpr", "fpr")
+random_auc = performance(random_confidence, "auc")
+random_auc = as.numeric(random_auc@y.values)
+random_auc
+
+new_compare =  rbind(new_compare, c("10 Random Forest", random_acc, random_auc))
+
+ggplot(new_compare, aes(models)) + geom_point(aes(y = accuracy, colour="Accuracy")) + geom_point(aes(y=auc, colour = "AUC")) + theme(axis.text.x = element_text(angle = -45)) + labs(y="Value") + theme()
+
+new_compare
+
+```
+
+a Random Forest with only 10 variables has a lower AUC but higher accuracy as compared to that of the random forest.
+
+What if we are to use only the top 3 variables instead?
+
+```{r}
+rf_3 = randomForest(MHT ~ WindDir9am + WindDir3pm  + WindGustDir, WAUS.train)
+
+random_pred3 = predict(rf_3, WAUS.test)
+random_acc3 = calc_acc(random_pred3)
+
+random_confidence3 = predict(rf_3 , WAUS.test, type = "prob")
+random_confidence3 = prediction(random_confidence3[,2], WAUS.test$MHT)
+random_roc3 = performance(random_confidence3, "tpr", "fpr")
+random_auc3 = performance(random_confidence3, "auc")
+random_auc3 = as.numeric(random_auc3@y.values)
+random_auc3
+
+new_compare =  rbind(new_compare, c("3 Random Forest", random_acc3, random_auc3))
+
+ggplot(new_compare, aes(models)) + geom_point(aes(y = accuracy, colour="Accuracy")) + geom_point(aes(y=auc, colour = "AUC")) + theme(axis.text.x = element_text(angle = -45)) + labs(y="Value") + theme()
+
+new_compare
+```
+
+A random Forest with 3 variables only performed slightly worse in both accuracy and AUC as compared to the 10 Random Forest.
+
+Looking at the data here, while we can agree that the original Random Forest has a low initial accuracy rate. If we are to change the probability in which it will predict it will be more humid tomorrow or not we are able to get a higher rate of success due to its AUC score. Hence I still believe that the original Random Forest is the best overall predictor. We have tried various other methods including reducing the amount of variables from the cross-validation from its lower error values and while accuracy of the random forest with 10 attributes increased compared to the normal random forest. AUC values of the 10 Random Forest is lower than that of the original Random Forest, indicating that if we are to tune the original RF model we will achieve better results.
+
+We can also conclude that having a random forest with 3 attributes does not help in increasing accuracy and AUC values as that of the normal decision tree. While in the normal decision tree decreasing the number of attributes to the 3 strongest predictors seem to increase accuracy and AUC values, decreasing the number of attributes of the random forest does not.
+
+-Question 11 Let's now build a ANN to classify the data
+
+```{r}
+#install.packages("neuralnet")
+library(neuralnet, warn.conflicts = F, quietly = T)
+```
+
+In Data Pre Processing, we will be changing all factors into numeric values so that it can be fed into the neural network. We will also be including only Wind Direction as to scale our neural network
+
+```{r}
+set.seed(32872461)
+WAUS$WindGustDir = as.numeric(WAUS$WindGustDir)
+WAUS$WindDir9am = as.numeric(WAUS$WindDir9am)
+WAUS$WindDir3pm = as.numeric(WAUS$WindDir3pm)
+WAUS$RainToday = as.numeric(WAUS$RainToday)
+WAUS$MHT = as.numeric(WAUS$MHT)
+WAUS$MHT = WAUS$MHT - 1
+#WAUS$Humid = WAUS$MHT == 2
+#WAUS$NotHumid = WAUS$MHT == 1
+
+train.row = sample(1:nrow(WAUS), 0.7*nrow(WAUS))
+
+WAUS.train_ann = WAUS[train.row,]
+WAUS.test_ann = WAUS[-train.row,]
+
+
+ann_model = neuralnet(MHT == 1~ WindGustDir + WindDir9am + WindDir3pm, WAUS.train_ann, hidden = 2)
+```
+
+Let us evaluate the performance
+
+```{r}
+ann_pred = compute(ann_model, WAUS.test_ann[c(8,10,11)])
+
+ann_pred = round(ann_pred$net.result, 0)
+ann_acc = calc_acc(ann_pred)
+ann_acc
+```
+
+Based on the data here, The accuracy of the ANN is low, hence it is not as competitive as compared to the other classifiers.
+
+-Question 12
+
+For this question we will be using XgBoost, a more updated version of boosting that we have covered previously. This is an Extreme Gradient Boost model that is based on decision trees. It is an extended version of the Ensemble Boosting method that we have done previously. The link can be accessed here: <https://xgboost.readthedocs.io/en/stable/>
+
+```{r}
+#install.packages("xgboost")
+```
+
+For this model to be able to work, we need to convert our data frame into a xgb matrix which allows for more efficient handling of the data through parallelization.
+
+```{r}
+#detach(package:neuralnet) #Run this to prevent issues with the prediction function from neuralnet
+set.seed(32872461)
+train.row = sample(1:nrow(WAUS), 0.7*nrow(WAUS))
+
+WAUS.train_boost = WAUS[train.row,]
+WAUS.test_boost = WAUS[-train.row,]
+library(xgboost, warn.conflicts = F, quietly = T)
+
+new_train = xgb.DMatrix(data = as.matrix(WAUS.train_boost[1:21]), label = as.matrix(WAUS.train_boost[22]))
+new_test = xgb.DMatrix(data = as.matrix(WAUS.test_boost[1:21]), label = as.matrix(WAUS.test_boost[22]))
+
+xgboost_model = xgboost(data = new_train, nround = 15, objective = "binary:logistic")
+
+
+xgboost_pred = predict(xgboost_model, new_test)
+xgboost_pred2 = round(xgboost_pred, 0)
+
+xgboost_acc = calc_acc(xgboost_pred2)
+
+
+xgboost_confidence = ROCR::prediction(xgboost_pred, WAUS.test_boost$MHT)
+
+xgboost_roc = performance(xgboost_confidence, "tpr", "fpr")
+plot(xgboost_roc)
+abline(0,1)
+xgboost_auc = performance(xgboost_confidence, "auc")
+xgboost_auc = as.numeric(xgboost_auc@y.values)
+xgboost_auc
+
+new_compare2 = rbind(new_compare, c("Xgboost Model", xgboost_acc, xgboost_auc))
+
+ggplot(new_compare2, aes(models)) + geom_point(aes(y = accuracy, colour="Accuracy")) + geom_point(aes(y=auc, colour = "AUC")) + theme(axis.text.x = element_text(angle = 90)) + labs(y="Value") + theme()
+```
+
+From the data above, we can see that the Xgboost Model performs the best out of all the classifiers that we have done so far. It has an amazing 61.7 percent accuracy and an AUC value of 0.67. This outperforms the AUC value of even that of the original Random Forest.
+
+Overall we can conclude that the data that we have gotten may not be the best in terms of predicting whether tomorrow will be more Humid than today or not. This is because of the fact that accuracy and AUC values of the models tested have not seen favorable results ( \>= 0.9 ) in both AUC and accuracy. This may indicate that more attributes may need to be collected in order to achieve better results.
